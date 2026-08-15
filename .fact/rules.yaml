@@ -1,0 +1,4 @@
+require_context_identity: error
+require_stable_fact_id: error
+require_local_type_spec: error
+require_resolved_local_links: error
