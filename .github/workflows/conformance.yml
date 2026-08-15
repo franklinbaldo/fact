@@ -1,4 +1,4 @@
-name: Conformance
+name: FACT Conformance
 
 on:
   push:
@@ -9,11 +9,12 @@ permissions:
   contents: read
 
 jobs:
-  minimal-okf:
+  complete-dogfooding:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate minimal compatibility fixture
-        uses: franklinbaldo/okf-parser@v0.41.3
+      - uses: actions/setup-python@v5
         with:
-          path: examples/minimal
+          python-version: "3.12"
+      - name: Require complete native FACT dogfooding
+        run: python scripts/check_dogfooding.py .
