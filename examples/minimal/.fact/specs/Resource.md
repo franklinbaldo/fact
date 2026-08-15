@@ -1,14 +1,13 @@
 ---
-id: type:Resource
-type: .fact/specs/TypeSpecification.md
-title: Resource
+kind: type-spec
+name: Resource
 ---
 
 # Resource
 
-A `Resource` fact points to or describes bytes that are not themselves FACT facts,
-such as CSV, JSON, images, PDFs, or source files.
+A `Resource` fact gives semantic meaning to a non-Markdown file carried by the
+context.
 
-A resource may live inside the context and appear in its file list. It enters the
-semantic FACT surface through a Markdown fact that references it; mere filesystem
-presence never promotes it into the fact set.
+The example field `resource` is a path resolved from the fact document that
+carries it. The referenced bytes remain a resource rather than being promoted to
+a FACT fact. This specification is control-plane Markdown under `.fact/`.
