@@ -1,5 +1,6 @@
 ---
-type: Procedure
+id: procedure:onboarding
+type: .fact/specs/Procedure.md
 title: Onboarding a new team member
 description: Steps performed on the first day of a new member of the team
 owner: operations
@@ -9,8 +10,7 @@ owner: operations
 
 Every new member gets an account, a laptop and a mentor on the first day.
 
-`owner` is not part of OKF v0.2. Unknown frontmatter fields are preserved
-rather than rejected, so a project can carry its own vocabulary without a
-schema change here.
+`owner` is producer vocabulary. FACT preserves fields it does not define in the
+core instead of rejecting them merely for being unfamiliar.
 
 The account created here is revisited by the [access review](access-review.md).
