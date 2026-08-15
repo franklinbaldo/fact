@@ -6,4 +6,5 @@ title: Minimal FACT example
 
 # Minimal FACT example context
 
-This ordinary FACT fact anchors the nested example context.
+This Markdown control document configures the nested example context. Because it
+lives under `.fact/`, it is not included in the context's semantic fact set.
