@@ -15,8 +15,19 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 TYPE_SPEC = ".fact/specs/TypeSpecification.md"
+CONTEXT_TYPE = ".fact/specs/Context.md"
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 SKIP_DIRS = {".git", "__pycache__"}
+LEGACY_CONTROL_SIDECARS = {
+    "context.yaml",
+    "context.yml",
+    "rules.yaml",
+    "rules.yml",
+    "vocabulary.yaml",
+    "vocabulary.yml",
+    "adapters.yaml",
+    "adapters.yml",
+}
 
 
 class GateError(Exception):
@@ -35,21 +46,15 @@ def parse_top_level_mapping(lines: list[str], source: Path) -> dict[str, str]:
     for raw in lines:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
-        if raw[:1].isspace():
-            continue
-        if ":" not in raw:
+        if raw[:1].isspace() or ":" not in raw:
             continue
         key, value = raw.split(":", 1)
         key = key.strip()
         if key:
             data[key] = scalar(value)
     if not data:
-        raise GateError(f"{source}: expected a non-empty top-level mapping")
+        raise GateError(f"{source}: expected non-empty YAML frontmatter")
     return data
-
-
-def parse_yaml_sidecar(path: Path) -> dict[str, str]:
-    return parse_top_level_mapping(path.read_text(encoding="utf-8").splitlines(), path)
 
 
 def parse_fact(path: Path) -> tuple[dict[str, str], str]:
@@ -66,10 +71,10 @@ def parse_fact(path: Path) -> tuple[dict[str, str], str]:
 
 def discover_contexts(base: Path) -> list[Path]:
     contexts: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(base):
+    for dirpath, dirnames, _ in os.walk(base):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         here = Path(dirpath)
-        if here.name == ".fact" and "context.yaml" in filenames:
+        if here.name == ".fact":
             contexts.append(here.parent.resolve())
     return sorted(set(contexts), key=lambda p: (len(p.parts), str(p)))
 
@@ -103,11 +108,10 @@ def owned_markdown(root: Path, contexts: list[Path]) -> list[Path]:
     return sorted(found)
 
 
-def resolve_link(source: Path, target: str, context_root: Path) -> Path | None:
+def resolve_reference(source: Path, target: str, context_root: Path) -> Path | None:
     target = target.strip()
     if target.startswith("<") and target.endswith(">"):
         target = target[1:-1]
-    # Markdown permits an optional title after a whitespace-separated target.
     if " " in target and not target.startswith(("http://", "https://")):
         target = target.split(" ", 1)[0]
     parsed = urlsplit(target)
@@ -121,20 +125,37 @@ def resolve_link(source: Path, target: str, context_root: Path) -> Path | None:
     return (source.parent / clean).resolve()
 
 
-def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int]:
-    marker = root / ".fact" / "context.yaml"
-    context = parse_yaml_sidecar(marker)
-    context_id = context.get("id", "").strip()
+def find_context_anchor(root: Path) -> tuple[Path, dict[str, str]]:
+    fact_dir = root / ".fact"
+    anchors: list[tuple[Path, dict[str, str]]] = []
+    for path in sorted(fact_dir.glob("*.md")):
+        data, _ = parse_fact(path)
+        if data.get("type") == CONTEXT_TYPE:
+            anchors.append((path.resolve(), data))
+    if len(anchors) != 1:
+        raise GateError(
+            f"{fact_dir}: expected exactly one direct Markdown Context fact; found {len(anchors)}"
+        )
+    return anchors[0]
+
+
+def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int, int]:
+    fact_dir = root / ".fact"
+    if not fact_dir.is_dir():
+        raise GateError(f"{root}: missing .fact/ context boundary")
+
+    for legacy in sorted(LEGACY_CONTROL_SIDECARS):
+        if (fact_dir / legacy).exists():
+            raise GateError(
+                f"{fact_dir / legacy}: repository dogfooding keeps semantic control data in Markdown facts"
+            )
+
+    anchor_path, anchor_data = find_context_anchor(root)
+    context_id = anchor_data.get("id", "").strip()
     if not context_id:
-        raise GateError(f"{marker}: native contexts need a stable non-empty id")
+        raise GateError(f"{anchor_path}: Context fact needs a stable non-empty id")
 
-    rules_ref = context.get("rules")
-    if rules_ref:
-        rules_path = (root / rules_ref).resolve()
-        if not rules_path.is_file():
-            raise GateError(f"{marker}: declared rules file does not exist: {rules_ref}")
-
-    bootstrap = root / TYPE_SPEC
+    bootstrap = (root / TYPE_SPEC).resolve()
     if not bootstrap.is_file():
         raise GateError(f"{root}: missing {TYPE_SPEC} bootstrap specification")
 
@@ -144,9 +165,10 @@ def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int]:
 
     ids: dict[str, Path] = {}
     fact_data: dict[Path, dict[str, str]] = {}
+    non_markdown_resource_refs: set[Path] = set()
 
     for path in facts:
-        data, _ = parse_fact(path)
+        data, text = parse_fact(path)
         fact_data[path] = data
         fact_id = data.get("id", "").strip()
         fact_type = data.get("type", "").strip()
@@ -171,26 +193,48 @@ def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int]:
         if owner_of(spec, contexts) != root:
             raise GateError(f"{path}: local type specification is not owned by the same context: {fact_type}")
 
-    bootstrap_data = fact_data.get(bootstrap.resolve())
+        resource = data.get("resource", "").strip()
+        if resource:
+            resolved = resolve_reference(path, resource, root)
+            if resolved is not None:
+                if not resolved.exists():
+                    raise GateError(f"{path}: referenced resource does not exist: {resource}")
+                if resolved.suffix.lower() != ".md":
+                    non_markdown_resource_refs.add(resolved)
+
+        for raw_target in LINK_RE.findall(text):
+            resolved = resolve_reference(path, raw_target, root)
+            if resolved is None:
+                continue
+            if not resolved.exists():
+                raise GateError(
+                    f"{path}: unresolved relative Markdown link {raw_target!r} -> {resolved}"
+                )
+            if resolved.is_file() and resolved.suffix.lower() != ".md":
+                non_markdown_resource_refs.add(resolved)
+
+    if anchor_path not in fact_data:
+        raise GateError(f"{anchor_path}: Context anchor must be an ordinary in-scope FACT fact")
+
+    bootstrap_data = fact_data.get(bootstrap)
     if bootstrap_data is None:
         raise GateError(f"{bootstrap}: bootstrap specification is not an ordinary in-scope fact")
     if bootstrap_data.get("type") != TYPE_SPEC:
         raise GateError(f"{bootstrap}: TypeSpecification must exercise the finite self-typing bootstrap")
 
+    specs_root = (root / ".fact" / "specs").resolve()
     for path, data in fact_data.items():
-        if is_below(path, (root / ".fact" / "specs").resolve()):
-            if data.get("type") != TYPE_SPEC:
-                raise GateError(f"{path}: every local type specification must itself be a TypeSpecification fact")
+        if is_below(path, specs_root) and data.get("type") != TYPE_SPEC:
+            raise GateError(f"{path}: every local type specification must itself be a TypeSpecification fact")
 
-        _, text = parse_fact(path)
-        for raw_target in LINK_RE.findall(text):
-            resolved = resolve_link(path, raw_target, root)
-            if resolved is not None and not resolved.exists():
-                raise GateError(
-                    f"{path}: unresolved relative Markdown link {raw_target!r} -> {resolved}"
-                )
+    # Non-Markdown files may exist freely. The semantic invariant is that they
+    # never entered `facts`; the referenced-resource fixture proves they can still
+    # participate through Markdown facts.
+    for resource in non_markdown_resource_refs:
+        if resource in fact_data:
+            raise GateError(f"{resource}: non-Markdown resource was incorrectly promoted to a fact")
 
-    return context_id, len(facts)
+    return context_id, len(facts), len(non_markdown_resource_refs)
 
 
 def main() -> int:
@@ -203,17 +247,31 @@ def main() -> int:
 
     context_ids: dict[str, Path] = {}
     total_facts = 0
+    total_resource_refs = 0
     for root in contexts:
-        context_id, count = validate_context(root, contexts)
+        context_id, fact_count, resource_ref_count = validate_context(root, contexts)
         if context_id in context_ids:
             raise GateError(
                 f"duplicate context id {context_id!r}: {context_ids[context_id]} and {root}"
             )
         context_ids[context_id] = root
-        total_facts += count
-        print(f"ok  {root.relative_to(base) if root != base else Path('.')}  {context_id}  {count} facts")
+        total_facts += fact_count
+        total_resource_refs += resource_ref_count
+        label = root.relative_to(base) if root != base else Path(".")
+        print(
+            f"ok  {label}  {context_id}  {fact_count} facts  "
+            f"{resource_ref_count} referenced non-Markdown resources"
+        )
 
-    print(f"FACT dogfooding complete: {len(contexts)} contexts, {total_facts} canonical facts")
+    if total_resource_refs < 1:
+        raise GateError(
+            "complete dogfooding requires at least one referenced non-Markdown resource that remains outside the fact set"
+        )
+
+    print(
+        f"FACT dogfooding complete: {len(contexts)} contexts, {total_facts} canonical facts, "
+        f"{total_resource_refs} referenced non-Markdown resources"
+    )
     return 0
 
 
