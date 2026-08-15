@@ -1,13 +1,12 @@
 ---
-id: type:RFC
-type: .fact/specs/TypeSpecification.md
-title: RFC
-defines: RFC
+kind: type-spec
+name: RFC
 ---
 
 # RFC
 
-An `RFC` fact records a proposed or accepted design decision for FACT.
+An `RFC` fact records a design proposal or decision for FACT.
 
-An RFC SHOULD carry a human-readable `title` and MAY carry lifecycle fields such
-as `status` in producer vocabulary.
+Typical fields include `title`, `status`, and `description` in addition to the
+canonical fact `id` and `type`. This specification is control-plane Markdown under
+`.fact/`; it is not itself a FACT fact.
