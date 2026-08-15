@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Deterministic dogfooding gate for the FACT specification repository.
 
-This intentionally uses only the Python standard library. It is not a general
-FACT parser; it is an executable assertion that this repository exercises the
-native invariants described by RFC 0009.
+This uses only the Python standard library. It is not a general FACT parser; it
+asserts that this repository exercises the native invariants described by RFC
+0009, including the fact/control-plane boundary and mixed-repository scope.
 """
 
 from __future__ import annotations
@@ -11,10 +11,11 @@ from __future__ import annotations
 import os
 import re
 import sys
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-TYPE_SPEC = ".fact/specs/TypeSpecification.md"
 CONTEXT_TYPE = ".fact/specs/Context.md"
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 SKIP_DIRS = {".git", "__pycache__"}
@@ -57,11 +58,11 @@ def parse_top_level_mapping(lines: list[str], source: Path) -> dict[str, str]:
     return data
 
 
-def parse_fact(path: Path) -> tuple[dict[str, str], str]:
+def parse_markdown(path: Path) -> tuple[dict[str, str], str]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        raise GateError(f"{path}: every in-scope Markdown document needs YAML frontmatter")
+        raise GateError(f"{path}: expected YAML frontmatter")
     try:
         end = next(i for i, line in enumerate(lines[1:], start=1) if line.strip() == "---")
     except StopIteration as exc:
@@ -69,12 +70,161 @@ def parse_fact(path: Path) -> tuple[dict[str, str], str]:
     return parse_top_level_mapping(lines[1:end], path), text
 
 
+# `.fact/ignore` deliberately follows the already-proven okf-parser exclusion
+# contract: gitignore-like matching plus useful re-inclusion below excluded
+# parents. This local copy keeps the FACT dogfood gate dependency-free.
+_COMMENT_PREFIX = "#"
+_NEGATION_PREFIX = "!"
+_ESCAPE = "\\"
+_SEPARATOR = "/"
+_RECURSIVE_SEGMENT = "**"
+
+
+@dataclass(frozen=True, slots=True)
+class IgnoreRule:
+    expression: re.Pattern[str]
+    negated: bool
+    directory_only: bool
+
+    def matches(self, relative: str, *, is_dir: bool) -> bool:
+        if self.directory_only and not is_dir:
+            return False
+        return self.expression.fullmatch(relative) is not None
+
+
+def strip_trailing_space(pattern: str) -> str:
+    end = len(pattern)
+    while end > 0 and pattern[end - 1] == " ":
+        escapes = 0
+        while end - 2 - escapes >= 0 and pattern[end - 2 - escapes] == _ESCAPE:
+            escapes += 1
+        if escapes % 2:
+            break
+        end -= 1
+    return pattern[:end]
+
+
+def class_expression(pattern: str, index: int) -> tuple[str, int] | None:
+    end = index + 1
+    if end < len(pattern) and pattern[end] in {_NEGATION_PREFIX, "^"}:
+        end += 1
+    if end < len(pattern) and pattern[end] == "]":
+        end += 1
+    while end < len(pattern) and pattern[end] != "]":
+        end += 1
+    if end >= len(pattern):
+        return None
+    body = pattern[index + 1 : end]
+    if body.startswith(_NEGATION_PREFIX):
+        body = "^" + body[1:]
+    return f"[{body}]", end + 1
+
+
+def segment_expression(segment: str) -> str:
+    expression = ""
+    index = 0
+    while index < len(segment):
+        character = segment[index]
+        if character == _ESCAPE and index + 1 < len(segment):
+            expression += re.escape(segment[index + 1])
+            index += 2
+            continue
+        if character == "*":
+            expression += "[^/]*"
+        elif character == "?":
+            expression += "[^/]"
+        elif character == "[" and (translated := class_expression(segment, index)) is not None:
+            expression += translated[0]
+            index = translated[1]
+            continue
+        else:
+            expression += re.escape(character)
+        index += 1
+    return expression
+
+
+def body_expression(pattern: str) -> str:
+    expression = ""
+    segments = pattern.split(_SEPARATOR)
+    for index, segment in enumerate(segments):
+        last = index == len(segments) - 1
+        if segment == _RECURSIVE_SEGMENT:
+            expression += ".*" if last else "(?:[^/]+/)*"
+            continue
+        expression += segment_expression(segment)
+        if not last:
+            expression += _SEPARATOR
+    return expression
+
+
+@lru_cache(maxsize=512)
+def compile_ignore(pattern: str) -> IgnoreRule | None:
+    line = strip_trailing_space(pattern)
+    if not line or line.startswith(_COMMENT_PREFIX):
+        return None
+    negated = line.startswith(_NEGATION_PREFIX)
+    if negated or (line.startswith(_ESCAPE) and line[1:2] in {_COMMENT_PREFIX, _NEGATION_PREFIX}):
+        line = line[1:]
+    directory_only = line.endswith(_SEPARATOR) and not line.endswith(_ESCAPE + _SEPARATOR)
+    if directory_only:
+        line = line[:-1]
+    if not line:
+        return None
+    anchored = _SEPARATOR in line
+    body = body_expression(line.removeprefix(_SEPARATOR))
+    if not anchored:
+        body = f"(?:[^/]+/)*{body}"
+    return IgnoreRule(re.compile(body), negated, directory_only)
+
+
+def iter_ancestors(relative: str):
+    segments = relative.split(_SEPARATOR)
+    for count in range(1, len(segments) + 1):
+        yield _SEPARATOR.join(segments[:count]), count < len(segments)
+
+
+@dataclass(frozen=True, slots=True)
+class IgnoreRules:
+    rules: tuple[IgnoreRule, ...]
+
+    @classmethod
+    def read(cls, root: Path) -> "IgnoreRules":
+        path = root / ".fact" / "ignore"
+        if not path.exists():
+            return cls(())
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (UnicodeDecodeError, OSError) as exc:
+            raise GateError(f"{path}: cannot read FACT ignore rules: {exc}") from exc
+        return cls(tuple(rule for raw in lines if (rule := compile_ignore(raw)) is not None))
+
+    @property
+    def has_negation(self) -> bool:
+        return any(rule.negated for rule in self.rules)
+
+    def decision(self, relative: str, *, is_dir: bool = False) -> tuple[bool, bool]:
+        excluded = False
+        reincluded = False
+        for ancestor, ancestor_is_dir in iter_ancestors(relative):
+            decisive = [
+                rule
+                for rule in self.rules
+                if rule.matches(ancestor, is_dir=ancestor_is_dir or is_dir)
+            ]
+            if decisive:
+                previous = excluded
+                excluded = not decisive[-1].negated
+                if previous and not excluded:
+                    reincluded = True
+        return excluded, reincluded
+
+
 def discover_contexts(base: Path) -> list[Path]:
     contexts: list[Path] = []
-    for dirpath, dirnames, _ in os.walk(base):
+    for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         here = Path(dirpath)
-        if here.name == ".fact":
+        if here.name == ".fact" and "context.md" in filenames:
             contexts.append(here.parent.resolve())
     return sorted(set(contexts), key=lambda p: (len(p.parts), str(p)))
 
@@ -94,18 +244,31 @@ def owner_of(path: Path, contexts: list[Path]) -> Path | None:
     return max(candidates, key=lambda root: len(root.parts))
 
 
-def owned_markdown(root: Path, contexts: list[Path]) -> list[Path]:
+def owned_markdown_facts(
+    root: Path, contexts: list[Path], ignore: IgnoreRules
+) -> tuple[list[Path], int, int]:
     found: list[Path] = []
+    ignored = 0
+    reincluded = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        # `.fact/` is control plane and therefore never even enters fact discovery.
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and d != ".fact"]
         here = Path(dirpath)
         for name in filenames:
             if not name.lower().endswith(".md"):
                 continue
             path = (here / name).resolve()
-            if owner_of(path, contexts) == root:
-                found.append(path)
-    return sorted(found)
+            if owner_of(path, contexts) != root:
+                continue
+            relative = path.relative_to(root).as_posix()
+            excluded, was_reincluded = ignore.decision(relative)
+            if excluded:
+                ignored += 1
+                continue
+            if was_reincluded:
+                reincluded += 1
+            found.append(path)
+    return sorted(found), ignored, reincluded
 
 
 def resolve_reference(source: Path, target: str, context_root: Path) -> Path | None:
@@ -125,51 +288,61 @@ def resolve_reference(source: Path, target: str, context_root: Path) -> Path | N
     return (source.parent / clean).resolve()
 
 
-def find_context_anchor(root: Path) -> tuple[Path, dict[str, str]]:
-    fact_dir = root / ".fact"
-    anchors: list[tuple[Path, dict[str, str]]] = []
-    for path in sorted(fact_dir.glob("*.md")):
-        data, _ = parse_fact(path)
-        if data.get("type") == CONTEXT_TYPE:
-            anchors.append((path.resolve(), data))
-    if len(anchors) != 1:
-        raise GateError(
-            f"{fact_dir}: expected exactly one direct Markdown Context fact; found {len(anchors)}"
-        )
-    return anchors[0]
+def validate_type_spec(spec: Path, root: Path) -> None:
+    specs_root = (root / ".fact" / "specs").resolve()
+    if not is_below(spec, specs_root):
+        raise GateError(f"{spec}: local type specification must live under .fact/specs/")
+    data, _ = parse_markdown(spec)
+    if data.get("kind") != "type-spec":
+        raise GateError(f"{spec}: control-plane type spec needs kind: type-spec")
+    if not data.get("name", "").strip():
+        raise GateError(f"{spec}: control-plane type spec needs a non-empty name")
 
 
-def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int, int]:
+def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int, int, int, int, bool]:
     fact_dir = root / ".fact"
-    if not fact_dir.is_dir():
-        raise GateError(f"{root}: missing .fact/ context boundary")
+    context_path = fact_dir / "context.md"
+    if not context_path.is_file():
+        raise GateError(f"{root}: missing .fact/context.md")
 
     for legacy in sorted(LEGACY_CONTROL_SIDECARS):
         if (fact_dir / legacy).exists():
             raise GateError(
-                f"{fact_dir / legacy}: repository dogfooding keeps semantic control data in Markdown facts"
+                f"{fact_dir / legacy}: dogfooding prefers Markdown/frontmatter for authored control data"
             )
 
-    anchor_path, anchor_data = find_context_anchor(root)
-    context_id = anchor_data.get("id", "").strip()
+    context, _ = parse_markdown(context_path)
+    context_id = context.get("id", "").strip()
     if not context_id:
-        raise GateError(f"{anchor_path}: Context fact needs a stable non-empty id")
+        raise GateError(f"{context_path}: context control document needs a stable id")
+    if context.get("type") != CONTEXT_TYPE:
+        raise GateError(f"{context_path}: expected type {CONTEXT_TYPE!r}")
 
-    bootstrap = (root / TYPE_SPEC).resolve()
-    if not bootstrap.is_file():
-        raise GateError(f"{root}: missing {TYPE_SPEC} bootstrap specification")
+    context_spec = (root / CONTEXT_TYPE).resolve()
+    if not context_spec.is_file():
+        raise GateError(f"{context_path}: Context control specification does not exist")
+    validate_type_spec(context_spec, root)
 
-    facts = owned_markdown(root, contexts)
+    specs_root = fact_dir / "specs"
+    specs = sorted(specs_root.glob("*.md"))
+    if not specs:
+        raise GateError(f"{specs_root}: native context needs local type specifications")
+    for spec in specs:
+        validate_type_spec(spec.resolve(), root)
+
+    ignore = IgnoreRules.read(root)
+    facts, ignored_count, reincluded_count = owned_markdown_facts(root, contexts, ignore)
     if not facts:
-        raise GateError(f"{root}: native context contains no in-scope facts")
+        raise GateError(f"{root}: native context contains no in-scope FACT facts")
 
     ids: dict[str, Path] = {}
-    fact_data: dict[Path, dict[str, str]] = {}
     non_markdown_resource_refs: set[Path] = set()
 
     for path in facts:
-        data, text = parse_fact(path)
-        fact_data[path] = data
+        if is_below(path, fact_dir.resolve()):
+            raise GateError(f"{path}: control-plane Markdown leaked into the fact set")
+
+        data, text = parse_markdown(path)
         fact_id = data.get("id", "").strip()
         fact_type = data.get("type", "").strip()
         if not fact_id:
@@ -191,7 +364,8 @@ def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int, int]:
         if not spec.is_file():
             raise GateError(f"{path}: local type specification does not exist: {fact_type}")
         if owner_of(spec, contexts) != root:
-            raise GateError(f"{path}: local type specification is not owned by the same context: {fact_type}")
+            raise GateError(f"{path}: local type specification belongs to another context: {fact_type}")
+        validate_type_spec(spec, root)
 
         resource = data.get("resource", "").strip()
         if resource:
@@ -213,28 +387,14 @@ def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int, int]:
             if resolved.is_file() and resolved.suffix.lower() != ".md":
                 non_markdown_resource_refs.add(resolved)
 
-    if anchor_path not in fact_data:
-        raise GateError(f"{anchor_path}: Context anchor must be an ordinary in-scope FACT fact")
-
-    bootstrap_data = fact_data.get(bootstrap)
-    if bootstrap_data is None:
-        raise GateError(f"{bootstrap}: bootstrap specification is not an ordinary in-scope fact")
-    if bootstrap_data.get("type") != TYPE_SPEC:
-        raise GateError(f"{bootstrap}: TypeSpecification must exercise the finite self-typing bootstrap")
-
-    specs_root = (root / ".fact" / "specs").resolve()
-    for path, data in fact_data.items():
-        if is_below(path, specs_root) and data.get("type") != TYPE_SPEC:
-            raise GateError(f"{path}: every local type specification must itself be a TypeSpecification fact")
-
-    # Non-Markdown files may exist freely. The semantic invariant is that they
-    # never entered `facts`; the referenced-resource fixture proves they can still
-    # participate through Markdown facts.
-    for resource in non_markdown_resource_refs:
-        if resource in fact_data:
-            raise GateError(f"{resource}: non-Markdown resource was incorrectly promoted to a fact")
-
-    return context_id, len(facts), len(non_markdown_resource_refs)
+    return (
+        context_id,
+        len(facts),
+        len(specs) + 1,
+        len(non_markdown_resource_refs),
+        ignored_count,
+        ignore.has_negation and reincluded_count > 0,
+    )
 
 
 def main() -> int:
@@ -247,30 +407,47 @@ def main() -> int:
 
     context_ids: dict[str, Path] = {}
     total_facts = 0
+    total_control_docs = 0
     total_resource_refs = 0
+    total_ignored_markdown = 0
+    exercised_reinclusion = False
+
     for root in contexts:
-        context_id, fact_count, resource_ref_count = validate_context(root, contexts)
+        (
+            context_id,
+            fact_count,
+            control_doc_count,
+            resource_ref_count,
+            ignored_count,
+            reincluded,
+        ) = validate_context(root, contexts)
         if context_id in context_ids:
             raise GateError(
                 f"duplicate context id {context_id!r}: {context_ids[context_id]} and {root}"
             )
         context_ids[context_id] = root
         total_facts += fact_count
+        total_control_docs += control_doc_count
         total_resource_refs += resource_ref_count
+        total_ignored_markdown += ignored_count
+        exercised_reinclusion = exercised_reinclusion or reincluded
         label = root.relative_to(base) if root != base else Path(".")
         print(
-            f"ok  {label}  {context_id}  {fact_count} facts  "
-            f"{resource_ref_count} referenced non-Markdown resources"
+            f"ok  {label}  {context_id}  {fact_count} facts  {control_doc_count} control docs  "
+            f"{resource_ref_count} resource refs  {ignored_count} ignored Markdown"
         )
 
     if total_resource_refs < 1:
-        raise GateError(
-            "complete dogfooding requires at least one referenced non-Markdown resource that remains outside the fact set"
-        )
+        raise GateError("dogfooding requires a referenced non-Markdown resource outside the fact set")
+    if total_ignored_markdown < 1:
+        raise GateError("dogfooding requires ignored Markdown outside .fact/")
+    if not exercised_reinclusion:
+        raise GateError("dogfooding requires .fact/ignore negation to re-include knowledge below an exclusion")
 
     print(
-        f"FACT dogfooding complete: {len(contexts)} contexts, {total_facts} canonical facts, "
-        f"{total_resource_refs} referenced non-Markdown resources"
+        f"FACT dogfooding complete: {len(contexts)} contexts, {total_facts} facts, "
+        f"{total_control_docs} control docs, {total_resource_refs} referenced resources, "
+        f"{total_ignored_markdown} ignored Markdown files"
     )
     return 0
 

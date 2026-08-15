@@ -1,12 +1,12 @@
 ---
-id: type:Project
-type: .fact/specs/TypeSpecification.md
-title: Project
-defines: Project
+kind: type-spec
+name: Project
 ---
 
 # Project
 
-A `Project` fact describes the purpose and public entry point of a FACT context.
+A `Project` fact describes a project or repository as semantic knowledge.
 
-For this repository, `README.md` is the project fact.
+Canonical facts of this type carry stable `id` and `type` frontmatter. This type
+specification lives in `.fact/`, so the specification itself is control-plane
+configuration rather than a member of the FACT fact set.

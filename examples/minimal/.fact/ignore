@@ -1,0 +1,3 @@
+# Mixed-repository scope: vendor is noise except its knowledge subtree.
+vendor
+!vendor/knowledge

@@ -1,11 +1,11 @@
 ---
-id: type:Context
-type: .fact/specs/TypeSpecification.md
-title: Context
+kind: type-spec
+name: Context
 ---
 
 # Context
 
-A `Context` fact anchors a native FACT context and carries that context's stable
-identity in its authored `id`. The `.fact/` directory is the boundary; the
-Markdown fact's `type`, not its filename, identifies the anchor.
+Configures the stable identity and metadata of this native FACT context.
+
+The control document lives directly under `.fact/` and does not participate in
+the semantic fact set.
