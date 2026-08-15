@@ -1,0 +1,3 @@
+id: urn:fact:context:example:minimal
+name: Minimal FACT example
+rules: .fact/rules.yaml
