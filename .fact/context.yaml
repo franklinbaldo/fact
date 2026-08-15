@@ -1,0 +1,3 @@
+id: urn:fact:context:fact
+name: FACT
+rules: .fact/rules.yaml
