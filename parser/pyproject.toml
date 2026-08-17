@@ -1,0 +1,91 @@
+[project]
+name = "okf-parser"
+version = "0.42.1"
+description = "Relational inspection and validation for Open Knowledge Format bundles"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "cyclopts>=4.22,<5",
+  "duckdb>=1.4,<2",
+  "fastmcp>=3.4,<4",
+  "ibis-framework[duckdb]>=12,<13",
+  "markdown-it-py>=4,<5",
+  # okf_parser.markdown_style overrides mdformat's ordered-list renderer, which
+  # needs symbols mdformat does not export. Keep this range as narrow as that
+  # dependency is real; the adapter also fails fast if the symbols are missing.
+  "mdformat>=1,<1.1",
+  "mdformat-frontmatter>=2,<3",
+  "mdformat-gfm>=1,<2",
+  "networkx>=3.4,<4",
+  "pyarrow>=18,<26",
+  "pydantic>=2.11,<3",
+  "pyyaml>=6,<7",
+  "ruamel.yaml>=0.18,<0.20",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<10",
+  "pytest-cov>=6,<7",
+  "ruff>=0.15,<0.16",
+  "ty>=0.0.1a20,<0.1",
+  "vulture>=2.14,<3",
+]
+
+[build-system]
+requires = ["maturin>=1.10,<2"]
+build-backend = "maturin"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/okf_parser"]
+
+[tool.coverage.report]
+skip_covered = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM812", "ISC001"]
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/okf_parser/apply.py" = ["BLE001", "PLR0913", "S608"]
+"src/okf_parser/bundle_import.py" = ["PLR0913", "S608"]
+"src/okf_parser/declared_schema.py" = ["S608"]
+"src/okf_parser/duckdb.py" = ["PLR0913"]
+"src/okf_parser/typed_tables.py" = ["S608"]
+"src/okf_parser/cli.py" = ["A002", "PLR0913", "T201"]
+"src/okf_parser/schema_export.py" = ["PLR0913"]
+"src/okf_parser/service.py" = ["PLR0913"]
+"tests/*" = ["D103", "PLR2004", "S101"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[[tool.ty.overrides]]
+include = [
+  "tests/fixtures/pydantic_generated.py",
+  "tests/fixtures/pydantic_adversarial_generated.py",
+]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[tool.maturin]
+manifest-path = "rust-core/Cargo.toml"
+bindings = "bin"
+module-name = "okf_parser"
+python-source = "src"
+python-packages = ["okf_parser"]
+strip = true
+locked = true
+sdist-generator = "git"
+exclude = [{ path = ".github/**", format = "sdist" }]

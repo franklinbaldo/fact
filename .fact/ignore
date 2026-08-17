@@ -1,0 +1,3 @@
+# okf-parser is vendored here as reference tooling — implementation details,
+# not FACT semantics (see README's "From okf-parser to FACT").
+parser
