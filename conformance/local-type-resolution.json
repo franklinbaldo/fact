@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "contexts": [".", "nested"],
+  "specs": {
+    ".fact/specs/Procedure.md": {"kind": "type-spec", "name": "Procedure"},
+    ".fact/specs/Broken.md": {"kind": "note", "name": "Broken"},
+    "nested/.fact/specs/Procedure.md": {"kind": "type-spec", "name": "Procedure"}
+  },
+  "cases": [
+    {
+      "name": "root fact resolves its local spec",
+      "fact": "concepts/onboarding.md",
+      "type": ".fact/specs/Procedure.md",
+      "valid": true,
+      "owner": ".",
+      "spec": ".fact/specs/Procedure.md"
+    },
+    {
+      "name": "nested context resolves its own same-named spec",
+      "fact": "nested/concepts/onboarding.md",
+      "type": ".fact/specs/Procedure.md",
+      "valid": true,
+      "owner": "nested",
+      "spec": "nested/.fact/specs/Procedure.md"
+    },
+    {
+      "name": "nested context does not inherit an ancestor spec",
+      "fact": "nested/concepts/missing.md",
+      "type": ".fact/specs/OnlyOuter.md",
+      "valid": false,
+      "error": "missing-local-spec"
+    },
+    {
+      "name": "missing local spec is invalid",
+      "fact": "concepts/missing.md",
+      "type": ".fact/specs/Missing.md",
+      "valid": false,
+      "error": "missing-local-spec"
+    },
+    {
+      "name": "noncanonical local type path is invalid",
+      "fact": "concepts/onboarding.md",
+      "type": "types/Procedure.md",
+      "valid": false,
+      "error": "noncanonical-type-reference"
+    },
+    {
+      "name": "malformed control document is not a type spec",
+      "fact": "concepts/broken.md",
+      "type": ".fact/specs/Broken.md",
+      "valid": false,
+      "error": "invalid-type-spec"
+    }
+  ]
+}
