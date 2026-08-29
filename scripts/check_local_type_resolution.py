@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
-FIXTURE = PurePosixPath("conformance/local-type-resolution.json")
+FIXTURE = Path("conformance/local-type-resolution.json")
 
 
 def is_below(path: PurePosixPath, root: PurePosixPath) -> bool:
