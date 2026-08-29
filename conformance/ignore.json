@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "ordinary paths remain in scope",
+      "patterns": ["vendor"],
+      "path": "concepts/onboarding.md",
+      "excluded": false,
+      "reincluded": false
+    },
+    {
+      "name": "basename pattern excludes a subtree",
+      "patterns": ["vendor"],
+      "path": "vendor/noise.md",
+      "excluded": true,
+      "reincluded": false
+    },
+    {
+      "name": "negation re-includes below an excluded parent",
+      "patterns": ["vendor", "!vendor/knowledge"],
+      "path": "vendor/knowledge/kept.md",
+      "excluded": false,
+      "reincluded": true
+    },
+    {
+      "name": "last match wins after re-inclusion",
+      "patterns": ["vendor", "!vendor/knowledge", "vendor/knowledge/draft.md"],
+      "path": "vendor/knowledge/draft.md",
+      "excluded": true,
+      "reincluded": true
+    },
+    {
+      "name": "unanchored glob matches at any depth",
+      "patterns": ["*.tmp.md"],
+      "path": "notes/archive/scratch.tmp.md",
+      "excluded": true,
+      "reincluded": false
+    },
+    {
+      "name": "root-anchored pattern does not match a nested peer",
+      "patterns": ["/build"],
+      "path": "nested/build/readme.md",
+      "excluded": false,
+      "reincluded": false
+    }
+  ]
+}
