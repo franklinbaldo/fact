@@ -18,3 +18,5 @@ jobs:
           python-version: "3.12"
       - name: Require complete native FACT dogfooding
         run: python scripts/check_dogfooding.py .
+      - name: Require language-neutral ignore conformance
+        run: python scripts/check_ignore_conformance.py
