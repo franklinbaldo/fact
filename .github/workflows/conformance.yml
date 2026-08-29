@@ -20,3 +20,5 @@ jobs:
         run: python scripts/check_dogfooding.py .
       - name: Require language-neutral ignore conformance
         run: python scripts/check_ignore_conformance.py
+      - name: Require language-neutral local type resolution
+        run: python scripts/check_local_type_resolution.py
