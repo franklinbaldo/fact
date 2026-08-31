@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "purpose": "Relational control resources are optional capabilities: their mere presence does not alter native fact membership or local type resolution, and native conformance does not require SQL execution.",
+  "context": ".",
+  "files": {
+    ".fact/context.md": {"kind": "control"},
+    ".fact/specs/Note.md": {"kind": "type-spec", "name": "Note"},
+    "notes/example.md": {"kind": "fact", "id": "example", "type": ".fact/specs/Note.md"},
+    "data/source.csv": {"kind": "resource"},
+    ".fact/specs/Note.schema.sql": {"kind": "relational-control", "payload": "INTENTIONALLY OPAQUE TO NATIVE CONFORMANCE"},
+    ".fact/schema.sql": {"kind": "relational-control", "payload": "INTENTIONALLY OPAQUE TO NATIVE CONFORMANCE"}
+  },
+  "cases": [
+    {
+      "name": "no-relational-resources",
+      "present_relational": [],
+      "facts": ["notes/example.md"],
+      "type_resolution": {"notes/example.md": ".fact/specs/Note.md"},
+      "requires_sql_execution": false
+    },
+    {
+      "name": "per-type-declaration-present",
+      "present_relational": [".fact/specs/Note.schema.sql"],
+      "facts": ["notes/example.md"],
+      "type_resolution": {"notes/example.md": ".fact/specs/Note.md"},
+      "requires_sql_execution": false
+    },
+    {
+      "name": "context-contract-present",
+      "present_relational": [".fact/schema.sql"],
+      "facts": ["notes/example.md"],
+      "type_resolution": {"notes/example.md": ".fact/specs/Note.md"},
+      "requires_sql_execution": false
+    },
+    {
+      "name": "both-relational-resources-present",
+      "present_relational": [".fact/specs/Note.schema.sql", ".fact/schema.sql"],
+      "facts": ["notes/example.md"],
+      "type_resolution": {"notes/example.md": ".fact/specs/Note.md"},
+      "requires_sql_execution": false
+    }
+  ]
+}
