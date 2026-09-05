@@ -24,6 +24,14 @@
       "spec": "nested/.fact/specs/Procedure.md"
     },
     {
+      "name": "absolute URI names an external type without dereference",
+      "fact": "concepts/external.md",
+      "type": "https://example.org/fact-types/Procedure",
+      "valid": true,
+      "owner": ".",
+      "spec": "https://example.org/fact-types/Procedure"
+    },
+    {
       "name": "nested context does not inherit an ancestor spec",
       "fact": "nested/concepts/missing.md",
       "type": ".fact/specs/OnlyOuter.md",
