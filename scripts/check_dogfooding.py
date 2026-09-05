@@ -288,6 +288,11 @@ def resolve_reference(source: Path, target: str, context_root: Path) -> Path | N
     return (source.parent / clean).resolve()
 
 
+def is_absolute_uri(value: str) -> bool:
+    """Recognize external type identity without dereferencing the network."""
+    return bool(urlsplit(value).scheme)
+
+
 def validate_type_spec(spec: Path, root: Path) -> None:
     specs_root = (root / ".fact" / "specs").resolve()
     if not is_below(spec, specs_root):
@@ -356,16 +361,17 @@ def validate_context(root: Path, contexts: list[Path]) -> tuple[str, int, int, i
             )
         ids[fact_id] = path
 
-        if not fact_type.startswith(".fact/specs/") or not fact_type.endswith(".md"):
-            raise GateError(
-                f"{path}: repository dogfooding requires canonical local type references; got {fact_type!r}"
-            )
-        spec = (root / fact_type).resolve()
-        if not spec.is_file():
-            raise GateError(f"{path}: local type specification does not exist: {fact_type}")
-        if owner_of(spec, contexts) != root:
-            raise GateError(f"{path}: local type specification belongs to another context: {fact_type}")
-        validate_type_spec(spec, root)
+        if not is_absolute_uri(fact_type):
+            if not fact_type.startswith(".fact/specs/") or not fact_type.endswith(".md"):
+                raise GateError(
+                    f"{path}: canonical FACT type must be a local .fact/specs/*.md reference or absolute URI; got {fact_type!r}"
+                )
+            spec = (root / fact_type).resolve()
+            if not spec.is_file():
+                raise GateError(f"{path}: local type specification does not exist: {fact_type}")
+            if owner_of(spec, contexts) != root:
+                raise GateError(f"{path}: local type specification belongs to another context: {fact_type}")
+            validate_type_spec(spec, root)
 
         resource = data.get("resource", "").strip()
         if resource:
