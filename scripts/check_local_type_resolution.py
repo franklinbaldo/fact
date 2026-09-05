@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 FIXTURE = Path("conformance/local-type-resolution.json")
 
@@ -22,12 +23,23 @@ def owner_of(path: PurePosixPath, contexts: list[PurePosixPath]) -> PurePosixPat
     return max(candidates, key=lambda root: len(root.parts)) if candidates else None
 
 
+def is_absolute_uri(value: str) -> bool:
+    """Return whether a type reference is an absolute URI without dereferencing it."""
+    return bool(urlsplit(value).scheme)
+
+
 def resolve(case: dict[str, object], contexts: list[PurePosixPath], specs: dict[str, dict[str, str]]) -> dict[str, object]:
     fact = PurePosixPath(str(case["fact"]))
     type_ref = str(case["type"])
     owner = owner_of(fact, contexts)
     if owner is None:
         return {"valid": False, "error": "no-owning-context"}
+    if is_absolute_uri(type_ref):
+        return {
+            "valid": True,
+            "owner": owner.as_posix(),
+            "spec": type_ref,
+        }
     if not type_ref.startswith(".fact/specs/") or not type_ref.endswith(".md"):
         return {"valid": False, "error": "noncanonical-type-reference"}
 
