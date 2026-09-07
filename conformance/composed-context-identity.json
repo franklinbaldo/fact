@@ -1,0 +1,34 @@
+{
+  "contract": "composed-context-identity-v1",
+  "cases": [
+    {
+      "name": "distinct-context-ids-compose",
+      "compositions": [
+        ["urn:fact:context:root", "urn:fact:context:nested"]
+      ],
+      "valid": true
+    },
+    {
+      "name": "duplicate-context-id-in-one-composition",
+      "compositions": [
+        ["urn:fact:context:shared", "urn:fact:context:shared"]
+      ],
+      "valid": false
+    },
+    {
+      "name": "same-id-in-independent-compositions",
+      "compositions": [
+        ["urn:fact:context:portable"],
+        ["urn:fact:context:portable"]
+      ],
+      "valid": true
+    },
+    {
+      "name": "empty-context-id-is-not-stable-identity",
+      "compositions": [
+        ["urn:fact:context:root", ""]
+      ],
+      "valid": false
+    }
+  ]
+}
