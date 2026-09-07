@@ -24,3 +24,5 @@ jobs:
         run: python scripts/check_local_type_resolution.py
       - name: Require relational capability boundary
         run: python scripts/check_relational_capability_boundary.py
+      - name: Require composed context identity conformance
+        run: python scripts/check_composed_context_identity.py
